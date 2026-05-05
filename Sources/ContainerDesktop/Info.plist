@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.containerdesktop.app</string>
+    <key>CFBundleName</key>
+    <string>Container Desktop</string>
+    <key>CFBundleDisplayName</key>
+    <string>Container Desktop</string>
+    <key>CFBundleExecutable</key>
+    <string>ContainerDesktopApp</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>15.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 Penning Labs. All rights reserved.</string>
+    <key>LSUIElement</key>
+    <false/>
+    <!-- Privacy descriptions required by macOS -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Container Desktop needs to send Apple Events to request administrator privileges for DNS domain management.</string>
+    <key>NSUserNotificationUsageDescription</key>
+    <string>Container Desktop sends notifications when containers start, stop, or encounter errors.</string>
+</dict>
+</plist>

@@ -1,0 +1,3 @@
+import ContainerDesktop
+
+ContainerDesktopApp.main()
