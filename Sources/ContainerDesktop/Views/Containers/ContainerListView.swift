@@ -351,6 +351,7 @@ struct ContainerDetailPanel: View {
         case terminal = "Terminal"
         case logs     = "Logs"
         case stats    = "Stats"
+        case files    = "Files"
     }
 
     var body: some View {
@@ -449,6 +450,16 @@ struct ContainerDetailPanel: View {
                         icon: "gauge.with.dots.needle.33percent",
                         message: "Container is not running",
                         detail: "Start the container to view resource stats."
+                    )
+                }
+            case .files:
+                if container.status == .running {
+                    ContainerFilesView(containerName: container.name, deps: deps)
+                } else {
+                    EmptyStateView(
+                        icon: "doc.on.doc",
+                        message: "Container is not running",
+                        detail: "Start the container to copy files."
                     )
                 }
             }

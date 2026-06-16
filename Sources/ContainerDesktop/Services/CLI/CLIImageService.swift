@@ -43,35 +43,74 @@ final class CLIImageService: ImageServiceProtocol, Sendable {
             }
     }
 
-    /// Parse the actual CLI JSON format:
+    /// Parse the v1.0.0 CLI JSON format:
     /// {
-    ///   "reference": "docker.io/library/nginx:latest",
-    ///   "descriptor": {
-    ///     "mediaType": "application/vnd.oci.image.index.v1+json",
-    ///     "digest": "sha256:7150b3a...",
-    ///     "size": 10229
+    ///   "configuration": {
+    ///     "name": "docker.io/library/nginx:latest",
+    ///     "descriptor": { "digest": "sha256:...", "mediaType": "...", "size": 10229 },
+    ///     "creationDate": "2026-03-24T22:12:00Z"
     ///   },
-    ///   "fullSize": "61.3 MB"
+    ///   "id": "7150b3a...",
+    ///   "variants": [
+    ///     { "platform": { "architecture": "arm64", "os": "linux" }, "size": 61295296, ... }
+    ///   ]
     /// }
     private func parseImageJSON(_ json: [String: Any]) -> ImageModel? {
-        let reference = json["reference"] as? String ?? "unknown"
-        let descriptor = json["descriptor"] as? [String: Any] ?? [:]
+        let config = json["configuration"] as? [String: Any] ?? [:]
+
+        // v1.0.0: reference is in configuration.name; fallback for older CLI
+        let reference = config["name"] as? String
+            ?? json["reference"] as? String
+            ?? "unknown"
+        let descriptor = config["descriptor"] as? [String: Any]
+            ?? json["descriptor"] as? [String: Any]
+            ?? [:]
 
         let digest = descriptor["digest"] as? String ?? ""
 
         // Parse reference into repository and tag
-        // "docker.io/library/nginx:latest" → repo="nginx", tag="latest"
         let (repository, tag) = Self.parseReference(reference)
 
-        // Size: use fullSize string if available, otherwise descriptor.size (manifest size, not image size)
-        let fullSizeStr = json["fullSize"] as? String
-        let size: UInt64
-        if let fullSizeStr = fullSizeStr {
-            size = Self.parseSizeString(fullSizeStr)
-        } else {
-            size = descriptor["size"] as? UInt64
-                ?? (descriptor["size"] as? Int).map({ UInt64($0) })
-                ?? 0
+        // Size: v1.0.0 has per-variant sizes. Use the largest real variant.
+        let variants = json["variants"] as? [[String: Any]] ?? []
+        var size: UInt64 = 0
+
+        if !variants.isEmpty {
+            let realVariants = variants.filter { variant in
+                let platform = variant["platform"] as? [String: Any] ?? [:]
+                let arch = platform["architecture"] as? String ?? "unknown"
+                return arch != "unknown"
+            }
+            size = realVariants.compactMap { variant -> UInt64? in
+                variant["size"] as? UInt64 ?? (variant["size"] as? Int).map({ UInt64($0) })
+            }.max() ?? 0
+        }
+
+        if size == 0 {
+            // Fallback for older CLI
+            let fullSizeStr = json["fullSize"] as? String
+            if let fullSizeStr = fullSizeStr {
+                size = Self.parseSizeString(fullSizeStr)
+            } else {
+                size = descriptor["size"] as? UInt64
+                    ?? (descriptor["size"] as? Int).map({ UInt64($0) })
+                    ?? 0
+            }
+        }
+
+        // Architecture: resolve from variants directly (no separate inspect needed)
+        var architecture: Architecture = .unknown
+        if !variants.isEmpty {
+            let realArchitectures = Set(variants.compactMap { variant -> String? in
+                let platform = variant["platform"] as? [String: Any] ?? [:]
+                let arch = platform["architecture"] as? String ?? "unknown"
+                return arch == "unknown" ? nil : arch
+            })
+            if realArchitectures.count > 1 {
+                architecture = .multi
+            } else if let first = realArchitectures.first {
+                architecture = Architecture(rawValue: first) ?? .unknown
+            }
         }
 
         return ImageModel(
@@ -81,7 +120,7 @@ final class CLIImageService: ImageServiceProtocol, Sendable {
             digest: digest,
             size: size,
             createdAt: nil,
-            architecture: .unknown,
+            architecture: architecture,
             os: "linux",
             layerCount: 0
         )

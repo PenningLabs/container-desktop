@@ -52,6 +52,14 @@ protocol ContainerServiceProtocol: Sendable {
 
     /// Immediately kill a container (SIGKILL). No graceful shutdown.
     func killContainer(id: String) async throws
+
+    /// Copy a file or directory from the host into a running container.
+    /// Syntax: container cp <hostPath> <containerID>:<containerPath>
+    func copyToContainer(id: String, hostPath: String, containerPath: String) async throws
+
+    /// Copy a file or directory from a running container to the host.
+    /// Syntax: container cp <containerID>:<containerPath> <hostPath>
+    func copyFromContainer(id: String, containerPath: String, hostPath: String) async throws
 }
 
 /// Extension with convenience defaults.

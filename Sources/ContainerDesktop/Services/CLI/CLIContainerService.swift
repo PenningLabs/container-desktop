@@ -47,66 +47,65 @@ final class CLIContainerService: ContainerServiceProtocol, Sendable {
     }
 
     private func parseContainerJSON(_ json: [String: Any]) -> ContainerModel? {
-        // Actual CLI JSON structure:
+        // v1.0.0 JSON structure:
         // {
-        //   "status": "running",
         //   "configuration": {
-        //     "id": "test-web",
-        //     "image": { "reference": "docker.io/library/nginx:latest" },
-        //     "platform": { "architecture": "arm64" },
-        //     "resources": { "cpus": 4, "memoryInBytes": 1073741824 },
-        //     "initProcess": { "environment": [...], "executable": "...", ... },
-        //     "networks": [{ "network": "default", "options": { "hostname": "test-web" }}]
+        //     "id": "my-container",
+        //     "image": { "reference": "...", "descriptor": {...} },
+        //     "platform": { "architecture": "arm64", "os": "linux" },
+        //     "resources": { "cpus": 4, "memoryInBytes": 1073741824, "cpuOverhead": 1 },
+        //     "networks": [{ "network": "default", "options": { "hostname": "...", "mtu": 1280 }}],
+        //     "dns": { "domain": "test", ... },
+        //     "publishedPorts": [{ "containerPort": 80, "hostPort": 8080, "proto": "tcp", ... }],
+        //     "mounts": [{ "destination": "/app", "source": "/host", "type": {"virtiofs": {}}, "options": [] }]
         //   },
-        //   "networks": [{
-        //     "ipv4Address": "192.168.64.2/24",
-        //     "hostname": "test-web",
-        //     ...
-        //   }],
-        //   "startedDate": 796179396.867293
+        //   "id": "my-container",
+        //   "status": { "state": "stopped", "networks": [...] }
         // }
 
         let config = json["configuration"] as? [String: Any] ?? [:]
 
-        // Container name/id from configuration.id
-        let name = config["id"] as? String
+        // Container name/id
+        let name = config["id"] as? String ?? json["id"] as? String
         guard let name = name, !name.isEmpty else { return nil }
 
-        // Status at top level
-        let statusStr = json["status"] as? String ?? "unknown"
+        // Status: v1.0.0 uses {"state": "stopped"}, older used plain string
+        let statusObj = json["status"] as? [String: Any]
+        let statusStr = statusObj?["state"] as? String
+            ?? json["status"] as? String
+            ?? "unknown"
         let status = ContainerStatus(rawValue: statusStr.lowercased()) ?? .unknown
 
-        // Image reference from configuration.image.reference
+        // Image reference
         let imageConfig = config["image"] as? [String: Any] ?? [:]
         var imageRef = imageConfig["reference"] as? String ?? "unknown"
-        // Strip the registry prefix for cleaner display (docker.io/library/nginx:latest → nginx:latest)
         if imageRef.hasPrefix("docker.io/library/") {
             imageRef = String(imageRef.dropFirst("docker.io/library/".count))
         }
 
-        // IP address from networks[0].ipv4Address (strip CIDR suffix)
-        let networksArray = json["networks"] as? [[String: Any]] ?? []
+        // IP address: v1.0.0 moved into status.networks
+        let statusNetworks = statusObj?["networks"] as? [[String: Any]]
+            ?? json["networks"] as? [[String: Any]]
+            ?? []
         var ipAddress: String? = nil
-        if let firstNetwork = networksArray.first {
-            if let ipWithCIDR = firstNetwork["ipv4Address"] as? String {
-                ipAddress = ipWithCIDR.components(separatedBy: "/").first
-            }
+        if let firstNetwork = statusNetworks.first,
+           let ipWithCIDR = firstNetwork["ipv4Address"] as? String {
+            ipAddress = ipWithCIDR.components(separatedBy: "/").first
         }
 
-        // DNS domain from configuration.networks
+        // Network name and DNS domain from configuration
         let configNetworks = config["networks"] as? [[String: Any]] ?? []
         let networkName = configNetworks.first?["network"] as? String
 
-        // DNS domain from configuration.dns.domain (NOT the network name)
         let dnsConfig = config["dns"] as? [String: Any] ?? [:]
         let dnsDomain = dnsConfig["domain"] as? String
 
-        // Architecture from configuration.platform
+        // Architecture
         let platform = config["platform"] as? [String: Any] ?? [:]
         let archStr = platform["architecture"] as? String ?? "arm64"
         let arch = Architecture(rawValue: archStr) ?? .unknown
 
-        // Resources from configuration.resources
+        // Resources
         let resources = config["resources"] as? [String: Any] ?? [:]
         let cpus = resources["cpus"] as? Int
         let memoryBytes = resources["memoryInBytes"] as? UInt64
@@ -114,9 +113,8 @@ final class CLIContainerService: ContainerServiceProtocol, Sendable {
 
         // Started date
         var createdAt: Date? = nil
-        if let timestamp = json["startedDate"] as? Double {
-            // This is a macOS absolute time (seconds since 2001-01-01)
-            createdAt = Date(timeIntervalSinceReferenceDate: timestamp)
+        if let ts = statusObj?["startedDate"] as? Double ?? json["startedDate"] as? Double {
+            createdAt = Date(timeIntervalSinceReferenceDate: ts)
         }
 
         return ContainerModel(
@@ -531,6 +529,38 @@ final class CLIContainerService: ContainerServiceProtocol, Sendable {
         }
         _ = try await cli.runOrThrow(["kill", id])
         AppEventLog.shared.containerEvent(id, "Container killed (SIGKILL)")
+    }
+
+    // MARK: - File Copy
+
+    /// Copy a file or directory from the host into a running container.
+    func copyToContainer(id: String, hostPath: String, containerPath: String) async throws {
+        guard InputValidation.isValidContainerName(id) else {
+            throw AppError.unknown("Invalid container ID: '\(id)'")
+        }
+        guard InputValidation.isValidPath(hostPath) else {
+            throw AppError.unknown("Invalid host path: '\(hostPath)'")
+        }
+        guard InputValidation.isValidPath(containerPath) else {
+            throw AppError.unknown("Invalid container path: '\(containerPath)'")
+        }
+        _ = try await cli.runOrThrow(["cp", hostPath, "\(id):\(containerPath)"], timeout: .seconds(120))
+        AppEventLog.shared.containerEvent(id, "Copied '\(hostPath)' → container:\(containerPath)")
+    }
+
+    /// Copy a file or directory from a running container to the host.
+    func copyFromContainer(id: String, containerPath: String, hostPath: String) async throws {
+        guard InputValidation.isValidContainerName(id) else {
+            throw AppError.unknown("Invalid container ID: '\(id)'")
+        }
+        guard InputValidation.isValidPath(containerPath) else {
+            throw AppError.unknown("Invalid container path: '\(containerPath)'")
+        }
+        guard InputValidation.isValidPath(hostPath) else {
+            throw AppError.unknown("Invalid host path: '\(hostPath)'")
+        }
+        _ = try await cli.runOrThrow(["cp", "\(id):\(containerPath)", hostPath], timeout: .seconds(120))
+        AppEventLog.shared.containerEvent(id, "Copied container:\(containerPath) → '\(hostPath)'")
     }
 
     // MARK: - Stats

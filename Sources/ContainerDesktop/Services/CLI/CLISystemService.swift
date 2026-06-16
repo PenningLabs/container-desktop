@@ -12,11 +12,17 @@ final class CLISystemService: SystemServiceProtocol, Sendable {
     // MARK: - Status
 
     func status() async throws -> SystemStatus {
-        // The `container system info` command doesn't exist.
-        // Instead, we check if the system is running by attempting
-        // to list containers. If that succeeds, the system is up.
+        // Check if the system is running by attempting to list containers.
+        // If that succeeds, the system is up.
         do {
-            let output = try await cli.runOrThrow(["ls", "--format", "json", "--all"])
+            // Try with --all flag, fall back without it if CLI changed
+            var output: String
+            do {
+                output = try await cli.runOrThrow(["ls", "--format", "json", "--all"])
+            } catch {
+                // v1.0.0 might use different flags — try without --all
+                output = try await cli.runOrThrow(["ls", "--format", "json"])
+            }
 
             // Parse container count from the JSON
             var containerCount = 0
@@ -24,13 +30,20 @@ final class CLISystemService: SystemServiceProtocol, Sendable {
             if let data = output.data(using: .utf8),
                let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
                 containerCount = jsonArray.count
-                runningCount = jsonArray.filter { ($0["status"] as? String) == "running" }.count
+                // v1.0.0: status is {"state": "running"}, older: status is "running"
+                runningCount = jsonArray.filter { json in
+                    if let statusObj = json["status"] as? [String: Any] {
+                        return (statusObj["state"] as? String)?.lowercased() == "running"
+                    }
+                    return (json["status"] as? String)?.lowercased() == "running"
+                }.count
             }
 
-            // Get image count (best effort)
+            // Get image count (best effort — don't let this fail the whole status check)
             var imageCount = 0
-            if let imageOutput = try? await cli.runOrThrow(["image", "list", "--format", "json"]),
-               let imageData = imageOutput.data(using: .utf8),
+            if let imageResult = try? await cli.run(["image", "list", "--format", "json"]),
+               imageResult.succeeded,
+               let imageData = imageResult.stdout.data(using: .utf8),
                let imageArray = try? JSONSerialization.jsonObject(with: imageData) as? [[String: Any]] {
                 imageCount = imageArray.count
             }
@@ -48,6 +61,20 @@ final class CLISystemService: SystemServiceProtocol, Sendable {
                 uptime: nil
             )
         } catch {
+            // If container ls fails, try a simpler check
+            let versionResult = try? await cli.run(["--version"])
+            if let versionResult = versionResult, versionResult.succeeded {
+                // CLI exists but system might be stopped
+                return SystemStatus(
+                    isRunning: false,
+                    version: versionResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                    containerCount: 0,
+                    runningCount: 0,
+                    imageCount: 0,
+                    kernelVersion: nil,
+                    uptime: nil
+                )
+            }
             return .offline
         }
     }

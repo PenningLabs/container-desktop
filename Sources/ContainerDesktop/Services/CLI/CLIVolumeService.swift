@@ -99,32 +99,45 @@ final class CLIVolumeService: VolumeServiceProtocol, Sendable {
     }
 
     private func parseVolumeJSON(_ json: [String: Any]) -> VolumeModel? {
-        // Actual format: {"name":"my-volume","driver":"local","source":"/path/volume.img",
-        //   "format":"ext4","sizeInBytes":549755813888,"createdAt":796226740.028912,
-        //   "options":{},"labels":{}}
-        let name = json["name"] as? String
-            ?? json["Name"] as? String
+        // v1.0.0 format:
+        // { "configuration": { "name": "my-volume", "driver": "local", "format": "ext4",
+        //     "sizeInBytes": 549755813888, "source": "/path/volume.img",
+        //     "creationDate": "2026-04-17T12:10:26Z", "labels": {}, "options": {} },
+        //   "id": "my-volume" }
+        let config = json["configuration"] as? [String: Any] ?? [:]
+
+        let name = config["name"] as? String
+            ?? json["name"] as? String
             ?? json["id"] as? String
         guard let name = name else { return nil }
 
-        let source = json["source"] as? String
+        let source = config["source"] as? String
+            ?? json["source"] as? String
             ?? json["mountpoint"] as? String
-            ?? json["Mountpoint"] as? String
             ?? ""
 
+        // v1.0.0 uses ISO 8601 string; older used macOS absolute time double
         var createdAt: Date? = nil
-        if let ts = json["createdAt"] as? Double {
+        if let dateStr = config["creationDate"] as? String {
+            let iso = ISO8601DateFormatter()
+            createdAt = iso.date(from: dateStr)
+        } else if let ts = json["createdAt"] as? Double {
             createdAt = Date(timeIntervalSinceReferenceDate: ts)
         }
 
-        let size = json["sizeInBytes"] as? UInt64
+        let size = config["sizeInBytes"] as? UInt64
+            ?? (config["sizeInBytes"] as? Int).map({ UInt64($0) })
+            ?? json["sizeInBytes"] as? UInt64
             ?? (json["sizeInBytes"] as? Int).map({ UInt64($0) })
-            ?? json["size"] as? UInt64
+
+        let driver = config["driver"] as? String
+            ?? json["driver"] as? String
+            ?? "local"
 
         return VolumeModel(
             id: name,
             name: name,
-            driver: json["driver"] as? String ?? json["Driver"] as? String ?? "local",
+            driver: driver,
             mountpoint: source,
             createdAt: createdAt,
             size: size

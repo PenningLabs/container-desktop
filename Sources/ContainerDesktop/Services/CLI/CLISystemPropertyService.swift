@@ -11,29 +11,46 @@ final class CLISystemPropertyService: Sendable {
     }
 
     /// List all system properties.
+    /// v1.0.0+: `container system property ls` outputs merged TOML config.
+    /// Older versions: `container system property list --format json` outputs JSON.
     func listProperties() async throws -> [SystemProperty] {
-        // Prefer JSON format for reliable parsing
-        let result = try await cli.run(["system", "property", "list", "--format", "json"])
-        if result.succeeded, let data = result.stdout.data(using: .utf8),
+        // Try JSON format first (older CLI versions)
+        let jsonResult = try await cli.run(["system", "property", "list", "--format", "json"])
+        if jsonResult.succeeded, let data = jsonResult.stdout.data(using: .utf8),
            let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
             return jsonArray.compactMap { parsePropertyJSON($0) }
         }
 
-        // Fallback to table
-        let output = try await cli.runOrThrow(["system", "property", "list"])
-        return parsePropertyTable(output)
+        // v1.0.0+: `container system property ls` outputs TOML
+        let tomlResult = try await cli.run(["system", "property", "ls"])
+        if tomlResult.succeeded {
+            return parseTOMLProperties(tomlResult.stdout)
+        }
+
+        return []
     }
 
     /// Get a single property value.
+    /// v1.0.0+: `get` subcommand removed. Returns value from TOML listing if found.
     func getProperty(_ id: String) async throws -> String {
         guard InputValidation.isSafePositionalArgument(id) else {
             throw AppError.unknown("Invalid property ID: '\(id)'")
         }
-        let output = try await cli.runOrThrow(["system", "property", "get", id])
-        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Try old get command first
+        let result = try await cli.run(["system", "property", "get", id])
+        if result.succeeded {
+            return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // v1.0.0: look up from TOML listing
+        let props = try await listProperties()
+        if let prop = props.first(where: { $0.id == id }) {
+            return prop.value ?? ""
+        }
+        throw AppError.unknown("Property '\(id)' not found")
     }
 
     /// Set a property value.
+    /// v1.0.0+: `set` subcommand removed. Users must edit ~/.config/container/config.toml.
     func setProperty(_ id: String, value: String) async throws {
         guard InputValidation.isSafePositionalArgument(id) else {
             throw AppError.unknown("Invalid property ID: '\(id)'")
@@ -41,8 +58,13 @@ final class CLISystemPropertyService: Sendable {
         guard InputValidation.isSafePositionalArgument(value) else {
             throw AppError.unknown("Invalid property value: '\(value)'")
         }
-        _ = try await cli.runOrThrow(["system", "property", "set", id, value])
-        AppEventLog.shared.info("Set system property '\(id)' = '\(value)'", source: "System")
+        // Try old set command first
+        let result = try await cli.run(["system", "property", "set", id, value])
+        if result.succeeded {
+            AppEventLog.shared.info("Set system property '\(id)' = '\(value)'", source: "System")
+            return
+        }
+        throw AppError.unknown("In container v1.0.0+, edit ~/.config/container/config.toml to change settings, then restart the system with 'container system stop && container system start'.")
     }
 
     // MARK: - Parsing
@@ -96,6 +118,58 @@ final class CLISystemPropertyService: Sendable {
                 description: description
             )
         }
+    }
+
+    /// Parse TOML output from `container system property ls` (v1.0.0+).
+    /// Example:
+    ///   [container]
+    ///   cpus = 4
+    ///   memory = "1gb"
+    ///   [dns]
+    ///   domain = "test"
+    /// Produces: [SystemProperty(id: "container.cpus", value: "4"), ...]
+    private func parseTOMLProperties(_ output: String) -> [SystemProperty] {
+        var properties: [SystemProperty] = []
+        var currentSection = ""
+
+        for line in output.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+
+            // Section header: [build], [container], [dns], etc.
+            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
+                currentSection = String(trimmed.dropFirst().dropLast())
+                continue
+            }
+
+            // Key = value
+            let parts = trimmed.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+
+            let key = parts[0].trimmingCharacters(in: .whitespaces)
+            var value = parts[1].trimmingCharacters(in: .whitespaces)
+
+            // Strip quotes from string values
+            if value.hasPrefix("\"") && value.hasSuffix("\"") {
+                value = String(value.dropFirst().dropLast())
+            }
+
+            let id = currentSection.isEmpty ? key : "\(currentSection).\(key)"
+
+            // Infer type from value
+            let type: String
+            if value == "true" || value == "false" {
+                type = "Bool"
+            } else if Int(value) != nil {
+                type = "Int"
+            } else {
+                type = "String"
+            }
+
+            properties.append(SystemProperty(id: id, type: type, value: value, description: ""))
+        }
+
+        return properties
     }
 }
 

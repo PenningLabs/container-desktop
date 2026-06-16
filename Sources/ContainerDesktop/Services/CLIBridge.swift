@@ -1,5 +1,13 @@
 import Foundation
 
+/// Thread-safe container for pipe read results.
+/// Used by CLIBridge to collect stdout/stderr from background threads
+/// without capturing mutable variables in Sendable closures.
+private final class PipeReadResult: @unchecked Sendable {
+    var stdout = Data()
+    var stderr = Data()
+}
+
 /// Bridge to the `container` CLI binary.
 ///
 /// Provides structured execution of CLI commands with proper
@@ -75,6 +83,27 @@ actor CLIBridge {
                 return
             }
 
+            // Read stdout and stderr concurrently to prevent pipe deadlock.
+            // If the process writes more than the pipe buffer (64KB on macOS),
+            // it blocks until someone drains the pipe. Reading in background
+            // threads ensures the pipe is drained while the process runs.
+            let stdoutHandle = stdoutPipe.fileHandleForReading
+            let stderrHandle = stderrPipe.fileHandleForReading
+            let pipeResult = PipeReadResult()
+            let readGroup = DispatchGroup()
+
+            readGroup.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                pipeResult.stdout = stdoutHandle.readDataToEndOfFile()
+                readGroup.leave()
+            }
+
+            readGroup.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                pipeResult.stderr = stderrHandle.readDataToEndOfFile()
+                readGroup.leave()
+            }
+
             // Set up timeout
             let effectiveTimeout = timeout ?? defaultTimeout
             let timeoutTask = Task {
@@ -87,11 +116,12 @@ actor CLIBridge {
             process.terminationHandler = { proc in
                 timeoutTask.cancel()
 
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                // Wait for pipe reads to finish (they will, since the process ended
+                // and the write ends of the pipes are closed)
+                readGroup.wait()
 
-                let stdout = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let stderr = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let stdout = String(data: pipeResult.stdout, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let stderr = String(data: pipeResult.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
                 let result = CommandResult(
                     exitCode: proc.terminationStatus,
@@ -155,6 +185,24 @@ actor CLIBridge {
                 return
             }
 
+            // Read stdout and stderr concurrently to prevent pipe deadlock
+            let stdoutHandle = stdoutPipe.fileHandleForReading
+            let stderrHandle = stderrPipe.fileHandleForReading
+            let pipeResult = PipeReadResult()
+            let readGroup = DispatchGroup()
+
+            readGroup.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                pipeResult.stdout = stdoutHandle.readDataToEndOfFile()
+                readGroup.leave()
+            }
+
+            readGroup.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                pipeResult.stderr = stderrHandle.readDataToEndOfFile()
+                readGroup.leave()
+            }
+
             let effectiveTimeout = timeout ?? defaultTimeout
             let timeoutTask = Task {
                 try await Task.sleep(for: effectiveTimeout)
@@ -165,12 +213,10 @@ actor CLIBridge {
 
             process.terminationHandler = { proc in
                 timeoutTask.cancel()
+                readGroup.wait()
 
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-
-                let stdout = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let stderr = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let stdout = String(data: pipeResult.stdout, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let stderr = String(data: pipeResult.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
                 let result = CommandResult(
                     exitCode: proc.terminationStatus,

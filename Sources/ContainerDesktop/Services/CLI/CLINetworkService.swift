@@ -81,20 +81,25 @@ final class CLINetworkService: Sendable {
     // MARK: - Parsing
 
     private func parseNetworkJSON(_ json: [String: Any]) -> NetworkInfo? {
-        // Actual format from CLI:
-        // { "id": "test", "state": "running",
-        //   "config": { "id": "test", "mode": "nat", ... },
-        //   "status": { "ipv4Subnet": "192.168.66.0/24", "ipv4Gateway": "...", "ipv6Subnet": "..." } }
-        guard let name = json["id"] as? String else { return nil }
-        let state = json["state"] as? String ?? "unknown"
+        // v1.0.0 format:
+        // { "configuration": { "name": "default", "mode": "nat", "plugin": "...", "creationDate": "...", ... },
+        //   "id": "default",
+        //   "status": { "ipv4Subnet": "192.168.65.0/24", "ipv4Gateway": "192.168.65.1", "ipv6Subnet": "..." } }
+        let config = json["configuration"] as? [String: Any] ?? json["config"] as? [String: Any] ?? [:]
+        let name = config["name"] as? String ?? json["id"] as? String
+        guard let name = name else { return nil }
+
         let status = json["status"] as? [String: Any] ?? [:]
-        let config = json["config"] as? [String: Any] ?? [:]
         let subnet = status["ipv4Subnet"] as? String
             ?? config["ipv4Subnet"] as? String
             ?? ""
         let gateway = status["ipv4Gateway"] as? String ?? ""
         let ipv6 = status["ipv6Subnet"] as? String ?? ""
         let mode = config["mode"] as? String ?? ""
+
+        // v1.0.0 doesn't have a top-level "state" — networks with a status block are active
+        let state = json["state"] as? String ?? (status.isEmpty ? "unknown" : "running")
+
         return NetworkInfo(
             name: name,
             state: state,
