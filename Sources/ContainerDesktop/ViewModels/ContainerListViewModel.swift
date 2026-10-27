@@ -211,4 +211,19 @@ final class ContainerListViewModel {
             self.error = .actionFailed("kill", error)
         }
     }
+
+    /// Reclaim unused disk space inside a running container (`container clean`).
+    func cleanContainer(_ id: String) async {
+        isOperationInProgress = true
+        defer { isOperationInProgress = false }
+        do {
+            let summary = try await containerService.cleanContainer(id: id)
+            let detail = summary.isEmpty ? "Unused disk space reclaimed" : summary
+            AppEventLog.shared.containerEvent(id, "Disk cleanup complete: \(detail)")
+            NotificationManager.shared.send(title: "Cleaned \(id)", body: detail)
+        } catch {
+            AppEventLog.shared.error(error, context: "Failed to clean container '\(id)'", source: id)
+            self.error = .actionFailed("clean", error)
+        }
+    }
 }

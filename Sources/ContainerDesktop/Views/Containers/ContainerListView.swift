@@ -213,6 +213,7 @@ struct ContainerListView: View {
                 if container.status == .running {
                     Button("Stop") { Task { await viewModel.stopContainer(id) } }
                     Button("Kill (force)") { Task { await viewModel.killContainer(id) } }
+                    Button("Reclaim Disk Space") { Task { await viewModel.cleanContainer(id) } }
                 } else if container.status == .stopped {
                     Button("Start") { Task { await viewModel.startContainer(id) } }
                     Button("Export Filesystem...") { exportContainer(container) }
@@ -400,6 +401,17 @@ struct ContainerDetailPanel: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Edit container settings")
+
+                    if container.status == .running {
+                        Button {
+                            Task { await containerVM.cleanContainer(container.id) }
+                        } label: {
+                            Image(systemName: "sparkles")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Reclaim unused disk space (container clean)")
+                    }
 
                     if container.status == .stopped {
                         Button {

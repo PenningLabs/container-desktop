@@ -563,6 +563,18 @@ final class CLIContainerService: ContainerServiceProtocol, Sendable {
         AppEventLog.shared.containerEvent(id, "Copied container:\(containerPath) → '\(hostPath)'")
     }
 
+    // MARK: - Disk Cleanup
+
+    /// Reclaim unused space on a running container's root filesystem and named volumes.
+    func cleanContainer(id: String) async throws -> String {
+        guard InputValidation.isValidContainerName(id) else {
+            throw AppError.unknown("Invalid container ID: '\(id)'")
+        }
+        // Trimming a large filesystem can take a while, so allow a generous timeout.
+        return try await cli.runOrThrow(["clean", id], timeout: .seconds(300))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: - Stats
 
     /// Fetch a single stats snapshot for a container.

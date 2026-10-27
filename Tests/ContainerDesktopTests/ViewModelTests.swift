@@ -118,6 +118,11 @@ final class MockContainerService: ContainerServiceProtocol, @unchecked Sendable 
     func copyFromContainer(id: String, containerPath: String, hostPath: String) async throws {
         if let error = shouldThrow { throw error }
     }
+
+    func cleanContainer(id: String) async throws -> String {
+        if let error = shouldThrow { throw error }
+        return ""
+    }
 }
 
 // MARK: - Mock image service

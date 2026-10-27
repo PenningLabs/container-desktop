@@ -19,7 +19,8 @@ Container Desktop gives you a full graphical interface for managing Linux contai
 ### Containers
 - **Full lifecycle management** — create, start, stop, kill (SIGKILL), delete, and prune containers
 - **Create and edit sheets** with all container options: ports, volumes, environment variables, DNS, network, resource limits, entrypoint, working directory, user, hostname, auto-remove, SSH agent forwarding, init process, nested virtualization, custom MAC address, and architecture selection
-- **Detail panel** with four tabs: Inspect (JSON metadata), Terminal (full PTY via SwiftTerm), Logs (ANSI color rendering with disk-backed caching), and Stats (CPU, memory, network, block I/O)
+- **Detail panel** with five tabs: Inspect (JSON metadata), Terminal (full PTY via SwiftTerm), Logs (ANSI color rendering with disk-backed caching), Stats (CPU, memory, network, block I/O), and Files (copy files and folders in and out of a running container)
+- **Disk cleanup** — reclaim unused space on a running container's root filesystem and named volumes (`container clean`)
 - **Container export** — save a stopped container's filesystem as a tar archive
 
 ### Images
@@ -29,7 +30,7 @@ Container Desktop gives you a full graphical interface for managing Linux contai
 - **Build** images from Dockerfiles with streaming step-by-step output, custom Dockerfile names, multi-architecture support, build arguments, target stages, and no-cache option
 - **Save/Load** — export images to OCI tar archives and import them back (Docker interop: `docker save | container image load`)
 - **Prune** dangling or all unused images
-- **Architecture detection** — correctly identifies ARM64, AMD64, and multi-arch images via background inspect
+- **Architecture detection** — correctly identifies ARM64, AMD64, and multi-arch images from the image's platform variants
 
 ### Registry
 - **Login/Logout** with support for Docker Hub, GitHub Container Registry, Quay.io, and custom registries
@@ -93,7 +94,9 @@ Container Desktop is a GUI frontend for Apple's `container` command-line tool. Y
    container --version
    ```
 
-If you see a version number (e.g., `0.11.0`), you're ready to go.
+If you see a version number (e.g., `1.6.1`), you're ready to go.
+
+**Compatibility:** Container Desktop requires container CLI **1.0.0 or later** and is tested with **1.6.1**. Disk cleanup requires 1.4.1 or later. Copying files requires containers created on 1.0.0 or later; recreate older containers to use the Files tab.
 
 ### Xcode
 - **Xcode 26** or later (for building from source)
@@ -213,7 +216,6 @@ container system property set container.memory 2g
 
 - **No GUI container support** — Apple Containers run headless Linux VMs. GUI apps require VNC or browser-based workarounds.
 - **No Docker Compose equivalent** — multi-container orchestration requires creating containers individually.
-- **Architecture display** — image architectures are resolved via background `container image inspect` calls, which may take a moment to appear after the image list loads.
 - **DNS domain management** requires administrator privileges (prompted via macOS password dialog). Note: Apple's DNS server has a known bug ([GitHub issue #856](https://github.com/apple/container/issues/856)) where the DNS server starts but never populates records. Containers can still be accessed by IP address.
 - **Networking features** are limited on macOS 15. macOS 26 is recommended for full networking support.
 

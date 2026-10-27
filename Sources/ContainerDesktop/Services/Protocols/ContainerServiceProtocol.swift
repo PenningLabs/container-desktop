@@ -60,6 +60,11 @@ protocol ContainerServiceProtocol: Sendable {
     /// Copy a file or directory from a running container to the host.
     /// Syntax: container cp <containerID>:<containerPath> <hostPath>
     func copyFromContainer(id: String, containerPath: String, hostPath: String) async throws
+
+    /// Reclaim unused space on a running container's root filesystem and named volumes.
+    /// Syntax: container clean <containerID>. Requires container CLI 1.4.1 or later.
+    /// Returns any summary text the CLI prints.
+    func cleanContainer(id: String) async throws -> String
 }
 
 /// Extension with convenience defaults.
